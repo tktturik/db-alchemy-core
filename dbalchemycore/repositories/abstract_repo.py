@@ -2,30 +2,40 @@ import logging
 logger = logging.getLogger(__name__)
 from typing import Generic, TypeVar, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Row, RowMapping, select, text, update, delete,insert
-from sqlalchemy.orm import DeclarativeMeta
-from db.models.base_model import Base
-from db.core.database import connection
+from sqlalchemy import select, text, update, delete,insert
+from dbalchemycore.models.base_model import Base
+from dbalchemycore.core.database import connection
 from sqlalchemy import select, func, distinct, and_, or_, text
-from sqlalchemy.exc import MultipleResultsFound, NoResultFound
-from typing import Optional, List, Dict, Any, Union, Type, Set
+from sqlalchemy.exc import MultipleResultsFound
+from typing import Optional, List, Dict, Any, Union
 from sqlalchemy.sql import Select
-from db.core.exc import *
+from dbalchemycore.core.exc import *
 import time
-
-
 from pydantic import BaseModel
 
 
 T = TypeVar("T", bound=Base)  # Тип модели
 
 class BaseRepository(Generic[T]):
-    """Базовый класс репозитория с реализацией CRUD операций."""
+    """
+    Базовый репозиторий для CRUD операций с моделями SQLAlchemy.
+    
+    Предоставляет универсальные методы для работы с БД:
+    - Получение данных (get_one, get_many)
+    - Создание записей (create)
+    - Обновление записей (update)
+    - Удаление записей (delete)
+    - Выполнение произвольных SQL запросов (execute_sql)
+    """    
     model: type[T]
     _model_columns_map: Dict[str, Any] = {}
     
     @classmethod
     def __init_subclass__(cls, **kwargs):
+        """
+        Инициализация подклассов репозитория.
+        Автоматически инициализирует маппинг колонок модели.
+        """
         super().__init_subclass__(**kwargs)
         if hasattr(cls, 'model') and cls.model is not None:
             cls._init_model_columns()
@@ -33,7 +43,10 @@ class BaseRepository(Generic[T]):
     
     @classmethod
     def _init_model_columns(cls):
-        """Инициализация маппинга колонок с label"""
+        """
+        Инициализация маппинга колонок модели с label.
+        Создает словарь {имя_поля: колонка.label(имя_поля)}.
+        """
         cls._model_columns_map = {
             field: getattr(cls.model, field).label(field)
             for field in cls.model.__table__.columns.keys()
@@ -43,7 +56,12 @@ class BaseRepository(Generic[T]):
 
     @classmethod
     def _get_model_columns(cls) -> Dict[str, Any]:
-        """Получить словарь колонок {имя: колонка.label(имя)}"""
+        """
+        Получить словарь колонок модели {имя: колонка.label(имя)}.
+        
+        Returns:
+            Dict[str, Any]: Словарь колонок модели
+        """
         if not hasattr(cls, "_model_columns_map") or cls._model_columns_map is None:
             cls._init_model_columns()
         return cls._model_columns_map
@@ -51,7 +69,8 @@ class BaseRepository(Generic[T]):
     @classmethod
     @connection()
     async def execute_sql(cls, stmt: str, session: AsyncSession) -> List[Dict]:
-        """Выполнить произвольный SQL-запрос и вернуть результат в виде списка словарей.
+        """
+        Выполнить произвольный SQL-запрос и вернуть результат в виде списка словарей.
         
         Args:
             stmt: SQL-запрос в виде строки
@@ -60,6 +79,7 @@ class BaseRepository(Generic[T]):
         Returns:
             List[Dict]: Список строк, где каждая строка представлена словарем
         """
+
         start_time = time.time()
         logger.debug("Выполнение самописного SQL запроса, длина: %d символов", len(stmt))
     
@@ -99,6 +119,7 @@ class BaseRepository(Generic[T]):
         Raises:
             MultipleResultsFound: Если strict=True и найдено более одной записи
         """
+
         start_time = time.time()
         logger.debug("Вызов get_one - ID: %s, strict: %s", id, strict)
 
@@ -178,6 +199,7 @@ class BaseRepository(Generic[T]):
         Returns:
             List[Dict[str, Any]]: Список словарей с данными записей
         """
+
         start_time = time.time()
         logger.debug("Вызов get_many - лимит: %s, distinct: %s", limit, is_distinct)
         # Переменные для хранения ключей результата
@@ -275,7 +297,16 @@ class BaseRepository(Generic[T]):
             
     @classmethod
     def _build_select_query(cls, select_fields: Optional[List[str]] = None, use_distinct: bool = False) -> Select:
-        """Построение базового SELECT запроса"""
+        """
+        Построение базового SELECT запроса.
+        
+        Args:
+            select_fields: Список полей для выборки
+            use_distinct: Использовать DISTINCT
+            
+        Returns:
+            Select: Скомпилированный SELECT запрос
+        """
         if select_fields:
             # Проверяем существование полей
             valid_fields = cls._validate_fields(select_fields)
@@ -305,6 +336,16 @@ class BaseRepository(Generic[T]):
         """
         Построение запроса с группировкой и агрегатными функциями.
         В SELECT попадают только поля из group_by + агрегатные функции.
+        
+        Args:
+            group_by: Поле(я) для группировки
+            aggregations: Словарь агрегатных функций
+            
+        Returns:
+            Select: Скомпилированный GROUP BY запрос
+            
+        Raises:
+            UnknowAggregationFunc: При неизвестной агрегационной функции
         """
         columns = []
         
@@ -345,7 +386,16 @@ class BaseRepository(Generic[T]):
 
     @classmethod
     def _apply_filters(cls, query: Select, filters: BaseModel) -> Select:
-        """Применение фильтров равенства"""
+        """
+        Применение фильтров равенства к запросу.
+        
+        Args:
+            query: Исходный SELECT запрос
+            filters: Pydantic модель с фильтрами
+            
+        Returns:
+            Select: Запрос с примененными фильтрами
+        """
         conditions = cls._build_conditions(filter=filters)    
         
         if conditions:
@@ -357,7 +407,16 @@ class BaseRepository(Generic[T]):
 
     @classmethod
     def _apply_ordering(cls, query: Select, order_by: Union[str, List[str]]) -> Select:
-        """Применение сортировки"""
+        """
+        Применение сортировки к запросу.
+        
+        Args:
+            query: Исходный SELECT запрос
+            order_by: Поле(я) для сортировки с префиксом '-' для DESC
+            
+        Returns:
+            Select: Запрос с примененной сортировкой
+        """
         if isinstance(order_by, str):
             order_by = [order_by]
         
@@ -383,7 +442,16 @@ class BaseRepository(Generic[T]):
 
     @classmethod
     def _apply_grouping(cls, query: Select, group_by: Union[str, List[str]]) -> Select:
-        """Применение группировки"""
+        """
+        Применение группировки к запросу.
+        
+        Args:
+            query: Исходный SELECT запрос
+            group_by: Поле(я) для группировки
+            
+        Returns:
+            Select: Запрос с примененной группировкой
+        """
         if isinstance(group_by, str):
             group_by = [group_by]
         
@@ -401,7 +469,16 @@ class BaseRepository(Generic[T]):
 
     @classmethod
     def _apply_having_filters(cls, query: Select, having_filters: BaseModel) -> Select:
-        """Применение HAVING фильтров после группировки"""
+        """
+        Применение HAVING фильтров после группировки.
+        
+        Args:
+            query: Запрос с группировкой
+            having_filters: Фильтры для применения после GROUP BY
+            
+        Returns:
+            Select: Запрос с примененными HAVING фильтрами
+        """
         filter_dict = having_filters.model_dump(exclude_unset=True)
         having_conditions = []
         model_fields = cls._get_model_columns().keys()
@@ -418,7 +495,18 @@ class BaseRepository(Generic[T]):
 
     @classmethod
     def _validate_fields(cls, fields: List[str]) -> List[str]:
-        """Валидация существования полей в модели"""
+        """
+        Валидация существования полей в модели.
+        
+        Args:
+            fields: Список полей для валидации
+            
+        Returns:
+            List[str]: Список валидных полей
+            
+        Raises:
+            InvalidFieldError: При наличии невалидных полей
+        """
         valid_fields = []
         model_fields = cls._get_model_columns().keys()
         for field in fields:
@@ -443,14 +531,18 @@ class BaseRepository(Generic[T]):
             List[Any]: Список условий для WHERE
             
         Raises:
+            EmptyFilterError: Если фильтры не переданы
             InvalidFieldError: Если найдено хоть одно невалидное поле
         """
 
         filter_dict = filter.model_dump(exclude_unset=True)
-   
+
+        if not filter_dict:
+            raise EmptyFilterError("Поля фильтров не были переданы")
+        
         model_fields = cls._get_model_columns()
         conditions = []
-        
+        logger.error("Передан словарь фильтров %s",filter_dict)
         for field, value in filter_dict.items():
             if field in model_fields:
                 column = model_fields[field].element
@@ -464,6 +556,8 @@ class BaseRepository(Generic[T]):
                     conditions.append(column == value)
             else:
                 raise InvalidFieldError(f"Поле '{field}' не найдено в модели {str(cls.model)}")
+        logger.error("Поулчившиеся условия %s из словаря %s",conditions,filter_dict)
+
         return conditions
 
     @classmethod
@@ -481,7 +575,7 @@ class BaseRepository(Generic[T]):
             session: Асинхронная сессия SQLAlchemy
             
         Returns:
-            Количество созданных записей (int)
+            int: Количество созданных записей
         """
         start_time = time.time()
 
@@ -497,8 +591,7 @@ class BaseRepository(Generic[T]):
         stmt = insert(cls.model).values(values_dicts)
 
         result = await session.execute(stmt)
-        execution_time = time.time() - start_time
-        logger.debug("Создано %d записей за %.3f сек", result.rowcount, execution_time)
+        logger.debug("Создано %d записей за %.3f сек", result.rowcount, _count_execute_time(start_time=start_time))
 
         return result.rowcount
             
@@ -511,14 +604,20 @@ class BaseRepository(Generic[T]):
         id: int = None, 
         filters: BaseModel = None
     ) -> int:
-        
         """
         Удалить записи по переданным параметрам.
         
-        :param session: Асинхронная сессия SQLAlchemy.
-        :param id: ID записи для удаления (приоритетный параметр).
-        :param filter: Модель с фильтрами для удаления.
-        :return: True, если записи были удалены, иначе Exception.
+        Args:
+            session: Асинхронная сессия SQLAlchemy
+            id: ID записи для удаления (приоритетный параметр)
+            filters: Модель с фильтрами для удаления
+            
+        Returns:
+            int: Количество удаленных записей
+            
+        Raises:
+            NotFoundError: Если записи для удаления не найдены
+            EmptyFilterError: Если не переданы параметры для удаления
         """
 
         start_time = time.time()
@@ -567,11 +666,19 @@ class BaseRepository(Generic[T]):
         """
         Универсальный метод для обновления записей одинаковыми значениями.
         
-        :param session: Асинхронная сессия SQLAlchemy.
-        :param values: Модель с новыми значениями для обновления.
-        :param id: ID записи для обновления (приоритетный параметр).
-        :param filter_criteria: Модель с критериями для фильтрации записей.
-        :return: Количество обновленных записей.
+        Args:
+            session: Асинхронная сессия SQLAlchemy
+            values: Модель с новыми значениями для обновления
+            id: ID записи для обновления (приоритетный параметр)
+            filters: Модель с критериями для фильтрации записей
+            
+        Returns:
+            int: Количество обновленных записей
+            
+        Raises:
+            EmptyValueError: Если не переданы значения для обновления
+            NotFoundError: Если записи для обновления не найдены
+            EmptyFilterError: Если не переданы критерии для обновления
         """
         start_time = time.time()
         logger.debug("Вызов update - ID: %s, есть_фильтр: %s", id, repr(filters))
@@ -620,4 +727,13 @@ class BaseRepository(Generic[T]):
 
 
 def _count_execute_time(start_time: float):
+    """
+    Вычисляет время выполнения операции.
+    
+    Args:
+        start_time: Время начала выполнения в секундах (time.time())
+        
+    Returns:
+        float: Время выполнения в секундах
+    """
     return time.time() - start_time
