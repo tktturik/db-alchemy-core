@@ -1,9 +1,8 @@
 import logging
 logger = logging.getLogger(__name__)
-import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
-from db.models.base_model import Base
+from dbalchemycore.models.base_model import Base
 import os
 import alembic.config
 
@@ -19,7 +18,6 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
 )
-from sqlalchemy.exc import OperationalError
 
 from .config import settings
 
@@ -31,9 +29,12 @@ _async_sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
 
 
 def _make_engine() -> AsyncEngine:
-    """Create AsyncEngine with sensible pool tuning for production.
+    """
+    Создает и возвращает асинхронный движок для работы с базой данных.
+    Инициализирует движок с настройками из конфигурации, использует пул соединений.
 
-    NOTE: tune pool_size / max_overflow to your workload and Postgres server limits.
+    Returns:
+        AsyncEngine: Асинхронный движок SQLAlchemy для подключения к БД.
     """
     global _engine
     if _engine is not None:
@@ -60,6 +61,13 @@ def _make_engine() -> AsyncEngine:
 
 
 def _make_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """
+    Создает и возвращает фабрику асинхронных сессий.
+    Инициализирует sessionmaker с настроенным движком и параметрами сессий.
+
+    Returns:
+        async_sessionmaker[AsyncSession]: Фабрика для создания асинхронных сессий.
+    """
     global _async_sessionmaker
     if _async_sessionmaker is not None:
         return _async_sessionmaker
@@ -77,8 +85,16 @@ def _make_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async context manager that yields a session and handles rollback/close."""
+    """
+    Асинхронный контекстный менеджер для получения сессии БД.
+    Автоматически обрабатывает откат транзакций при ошибках и закрытие сессии.
 
+    Yields:
+        AsyncSession: Асинхронная сессия для работы с базой данных.
+
+    Raises:
+        SQLAlchemyError: При возникновении ошибок в работе с БД.
+    """
     session_maker = _make_sessionmaker()
     async with session_maker() as session:
         logger.debug("Сессия базы данных создана")
@@ -101,13 +117,16 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 def connection(isolation_level: Optional[str] = None, commit: bool = True):
     """
-    Декоратор для управления сессией с возможностью настройки уровня изоляции и коммита.
+    Декоратор для управления сессией БД с настройкой уровня изоляции и коммита.
+    Обеспечивает автоматическое создание сессии, коммит и откат транзакций.
 
-    Параметры:
-    - `isolation_level`: уровень изоляции для транзакции (например, "SERIALIZABLE").
-    - `commit`: если `True`, выполняется коммит после вызова метода.
+    Args:
+        isolation_level: Уровень изоляции транзакции (например, "SERIALIZABLE").
+        commit: Флаг необходимости коммита после выполнения метода.
+
+    Returns:
+        Декорированную функцию с управлением сессией.
     """
-
     def decorator(method):
         @wraps(method)
         async def wrapper(*args, **kwargs):
@@ -145,8 +164,15 @@ def connection(isolation_level: Optional[str] = None, commit: bool = True):
     return decorator
 
 
-# FastAPI dependency helper (if you use FastAPI)
+
 async def get_db_dependency() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Генератор зависимости для FastAPI, предоставляющий сессию БД.
+    Используется как dependency injection в FastAPI роутах.
+
+    Yields:
+        AsyncSession: Асинхронная сессия для работы с базой данных.
+    """
     async with get_session() as session:
         logger.debug("Сессия создана для зависимости FastAPI")
 
@@ -154,8 +180,14 @@ async def get_db_dependency() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db(migrations_path: str = "alembic") -> None:
-    """Ensure DB is reachable and initialize engine and sessionmaker."""
+    """
+    Инициализирует подключение к БД, применяет миграции или создает таблицы.
+    Проверяет наличие миграций Alembic и применяет их, либо создает таблицы через metadata.create_all.
 
+    Args:
+        migrations_path: Путь к директории с миграциями Alembic.
+
+    """
     _make_engine()
     _make_sessionmaker()
 
