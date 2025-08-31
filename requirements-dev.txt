@@ -6,3 +6,4 @@ typing-inspection==0.4.1
 typing_extensions==4.14.1
 pytest==8.4.1
 pytest-asyncio==1.1.0
+pytest-cov==6.2.1
