@@ -1,35 +1,54 @@
 import logging
-logger = logging.getLogger(__name__)
-from typing import Generic, TypeVar, List, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text, update, delete,insert
-from dbalchemycore.models.base_model import Base
-from dbalchemycore.core.database import connection
-from sqlalchemy import select, func, distinct, and_, or_, text
-from sqlalchemy.exc import MultipleResultsFound
-from typing import Optional, List, Dict, Any, Union
-from sqlalchemy.sql import Select
-from dbalchemycore.core.exc import *
 import time
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+
 from pydantic import BaseModel
+from sqlalchemy import (
+    and_,
+    delete,
+    distinct,
+    func,
+    insert,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.exc import MultipleResultsFound
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
+
+from dbalchemycore.core.database import connection
+from dbalchemycore.core.exc import (
+    EmptyFilterError,
+    EmptyValueError,
+    InvalidFieldError,
+    NotFoundError,
+    UnknowAggregationFunc,
+)
+from dbalchemycore.models.base_model import Base
 
 
-T = TypeVar("T", bound=Base)  # Тип модели
+logger = logging.getLogger(__name__)
+
+
+T = TypeVar("T", bound=Base)
+
 
 class BaseRepository(Generic[T]):
     """
     Базовый репозиторий для CRUD операций с моделями SQLAlchemy.
-    
+
     Предоставляет универсальные методы для работы с БД:
     - Получение данных (get_one, get_many)
     - Создание записей (create)
     - Обновление записей (update)
     - Удаление записей (delete)
     - Выполнение произвольных SQL запросов (execute_sql)
-    """    
+    """
+
     model: type[T]
     _model_columns_map: Dict[str, Any] = {}
-    
+
     @classmethod
     def __init_subclass__(cls, **kwargs):
         """
@@ -37,10 +56,12 @@ class BaseRepository(Generic[T]):
         Автоматически инициализирует маппинг колонок модели.
         """
         super().__init_subclass__(**kwargs)
-        if hasattr(cls, 'model') and cls.model is not None:
+        if hasattr(cls, "model") and cls.model is not None:
             cls._init_model_columns()
-            logger.debug("Инициализированы колонки модели для %s", cls.model.__name__)
-    
+            logger.debug(
+                "Инициализированы колонки модели для %s", cls.model.__name__
+            )
+
     @classmethod
     def _init_model_columns(cls):
         """
@@ -51,18 +72,22 @@ class BaseRepository(Generic[T]):
             field: getattr(cls.model, field).label(field)
             for field in cls.model.__table__.columns.keys()
         }
-        logger.debug("Создан маппинг колонок с %d полями", len(cls._model_columns_map))
-
+        logger.debug(
+            "Создан маппинг колонок с %d полями", len(cls._model_columns_map)
+        )
 
     @classmethod
     def _get_model_columns(cls) -> Dict[str, Any]:
         """
         Получить словарь колонок модели {имя: колонка.label(имя)}.
-        
+
         Returns:
             Dict[str, Any]: Словарь колонок модели
         """
-        if not hasattr(cls, "_model_columns_map") or cls._model_columns_map is None:
+        if (
+            not hasattr(cls, "_model_columns_map")
+            or cls._model_columns_map is None
+        ):
             cls._init_model_columns()
         return cls._model_columns_map
 
@@ -71,25 +96,28 @@ class BaseRepository(Generic[T]):
     async def execute_sql(cls, stmt: str, session: AsyncSession) -> List[Dict]:
         """
         Выполнить произвольный SQL-запрос и вернуть результат в виде списка словарей.
-        
+
         Args:
             stmt: SQL-запрос в виде строки
             session: Асинхронная сессия SQLAlchemy
-            
+
         Returns:
             List[Dict]: Список строк, где каждая строка представлена словарем
         """
 
         start_time = time.time()
-        logger.debug("Выполнение самописного SQL запроса, длина: %d символов", len(stmt))
-    
+        logger.debug(
+            "Выполнение самописного SQL запроса, длина: %d символов", len(stmt)
+        )
+
         result = await session.execute(text(stmt))
-        
-        logger.debug("SQL выполнен за %.3f сек", _count_execute_time(start_time=start_time))
-            
+
+        logger.debug(
+            "SQL выполнен за %.3f сек",
+            _count_execute_time(start_time=start_time),
+        )
+
         return [dict(row) for row in result.mappings()]
-        
-    
 
     @classmethod
     @connection(commit=False)
@@ -100,11 +128,11 @@ class BaseRepository(Generic[T]):
         select_fields: Optional[List[str]] = None,
         order_by: Optional[Union[str, List[str]]] = None,
         strict: bool = True,
-        session: AsyncSession = None
+        session: AsyncSession = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Получить одну запись в виде словаря.
-        
+
         Args:
             id: ID записи для поиска
             filters: Pydantic модель с фильтрами равенства
@@ -112,10 +140,10 @@ class BaseRepository(Generic[T]):
             order_by: Поле(я) для сортировки. Для DESC добавить префикс '-'
             strict: Если True, выбросит исключение при множественных результатах
             session: Асинхронная сессия SQLAlchemy
-            
+
         Returns:
-            Optional[Dict[str, Any]]: Словарь с данными записи или None если не найдено
-            
+            Dict: Словарь с данными записи или None если не найдено
+
         Raises:
             MultipleResultsFound: Если strict=True и найдено более одной записи
         """
@@ -123,23 +151,32 @@ class BaseRepository(Generic[T]):
         start_time = time.time()
         logger.debug("Вызов get_one - ID: %s, strict: %s", id, strict)
 
-        # Оптимизация для запроса по ID
-        if id is not None and filters is None and select_fields is None and order_by is None:
+        if (
+            id is not None
+            and filters is None
+            and select_fields is None
+            and order_by is None
+        ):
             logger.debug("Оптимизированный путь запроса по ID")
             columns = list(cls._get_model_columns().values())
             stmt = select(*columns).where(cls.model.id == id)
             result = await session.execute(stmt)
-            mapping = result.mappings().one_or_none()  # Возвращает None если ничего не найдено
+            mapping = result.mappings().one_or_none()
 
             if mapping is None:
-                logger.debug("Найдена запись по ID за %.3f сек", _count_execute_time(start_time=start_time))
+                logger.debug(
+                    "Найдена запись по ID за %.3f сек",
+                    _count_execute_time(start_time=start_time),
+                )
                 return None
             else:
-                logger.debug("Запись не найдена по ID за %.3f сек", _count_execute_time(start_time=start_time))
+                logger.debug(
+                    "Запись не найдена по ID за %.3f сек",
+                    _count_execute_time(start_time=start_time),
+                )
 
             return dict(mapping)
 
-        # Базовый запрос
         query = cls._build_select_query(select_fields)
         if id is not None:
             query = query.where(cls.model.id == id)
@@ -148,23 +185,25 @@ class BaseRepository(Generic[T]):
         if order_by:
             query = cls._apply_ordering(query, order_by)
 
-        # Выполняем запрос
         if strict:
             result = await session.execute(query)
-            mappings = result.mappings().all()  # Fetch all для проверки
+            mappings = result.mappings().all()
             if len(mappings) > 1:
-                raise MultipleResultsFound(f"Найдено несколько строк, ожидалась только 1 для {cls.model.__name__}")
+                raise MultipleResultsFound(
+                    f"Найдено несколько строк, ожидалась только 1 для {cls.model.__name__}"
+                )
             mapping = mappings[0] if mappings else None
         else:
-            # Для non-strict — limit 1
             query = query.limit(1)
             result = await session.execute(query)
             mapping = result.mappings().first()
-        logger.debug("get_one завершен за %.3f сек, найдено: %s", 
-                    _count_execute_time(start_time=start_time), mapping is not None)
+        logger.debug(
+            "get_one завершен за %.3f сек, найдено: %s",
+            _count_execute_time(start_time=start_time),
+            mapping is not None,
+        )
 
         return dict(mapping) if mapping is not None else None
-
 
     @classmethod
     @connection(commit=False)
@@ -179,11 +218,11 @@ class BaseRepository(Generic[T]):
         group_by: Optional[Union[str, List[str]]] = None,
         having_filters: Optional[BaseModel] = None,
         aggregations: Optional[Dict[str, str]] = None,
-        session: AsyncSession = None
+        session: AsyncSession = None,
     ) -> List[Dict[str, Any]]:
         """
         Получить множество записей в виде списка словарей.
-        
+
         Args:
             filters: Pydantic модель с фильтрами равенства
             select_fields: Список полей для выборки (игнорируется при group_by)
@@ -195,315 +234,326 @@ class BaseRepository(Generic[T]):
             having_filters: Фильтры для HAVING (после группировки)
             aggregations: Словарь агрегатных функций {'field': 'func'} где func: count, sum, avg, min, max
             session: Асинхронная сессия SQLAlchemy
-            
+
         Returns:
-            List[Dict[str, Any]]: Список словарей с данными записей
+            List[Dict]: Список словарей с данными записей
         """
 
         start_time = time.time()
-        logger.debug("Вызов get_many - лимит: %s, distinct: %s", limit, is_distinct)
-        # Переменные для хранения ключей результата
+        logger.debug(
+            "Вызов get_many - лимит: %s, distinct: %s", limit, is_distinct
+        )
         expected_keys = []
-        
-        # Строим базовый запрос с учетом группировки
+
         if group_by or aggregations:
             logger.debug("Использование группированного запроса")
             query = cls._build_grouped_query(group_by, aggregations)
-            # Для группировки получим ключи из первой строки результата
-            expected_keys = None  # Определим позже из результата
+            expected_keys = None
         else:
-            # Обычный запрос - всегда получаем сырые данные для словарей
             if select_fields:
-                # Валидируем поля используя множество полей модели
-                if hasattr(cls, '_validate_fields'):
+                if hasattr(cls, "_validate_fields"):
                     valid_fields = cls._validate_fields(select_fields)
                 else:
-                    # Простая валидация через множество полей
                     model_fields = cls._get_model_columns().keys()
-                    valid_fields = [field for field in select_fields if field in model_fields]
+                    valid_fields = [
+                        field
+                        for field in select_fields
+                        if field in model_fields
+                    ]
                     if not valid_fields:
-                        raise ValueError(f"No valid fields found in select_fields: {select_fields}")
-                
+                        raise ValueError(
+                            f"No valid fields found in select_fields: {select_fields}"
+                        )
+
                 columns_map = cls._get_model_columns()
                 columns = [columns_map[field] for field in valid_fields]
 
                 expected_keys = valid_fields
-                
+
                 if is_distinct:
                     query = select(distinct(*columns))
                 else:
                     query = select(*columns)
             else:
-                # Выбираем все поля из множества _model_fields
                 columns_map = cls._get_model_columns()
                 columns = list(columns_map.values())
                 expected_keys = list(columns_map.keys())
 
-                
                 if is_distinct:
                     query = select(distinct(*columns))
                 else:
                     query = select(*columns)
-        
-        # Применяем фильтры и другие параметры
+
         if filters:
             query = cls._apply_filters(query, filters)
         if group_by:
             query = cls._apply_grouping(query, group_by)
         if having_filters and group_by:
             query = cls._apply_having_filters(query, having_filters)
+        elif having_filters and group_by is None:
+            raise ValueError("Group by не был передан, having невозможен")
         if order_by:
             query = cls._apply_ordering(query, order_by)
         if offset:
             query = query.offset(offset)
         if limit:
             query = query.limit(limit)
-        
-        # Выполняем запрос
+
         result = await session.execute(query)
         rows = result.all()
-        logger.debug("get_many завершен за %.3f сек, найдено %d строк", 
-                    _count_execute_time(start_time=start_time), len(rows))
+        logger.debug(
+            "get_many завершен за %.3f сек, найдено %d строк",
+            _count_execute_time(start_time=start_time),
+            len(rows),
+        )
         if not rows:
             return []
-        
-        # Определяем ключи для создания словарей
+
         if expected_keys is None:
-            # Для группировки или агрегации - получаем ключи из первой строки
-            if hasattr(rows[0], '_mapping'):
+            if hasattr(rows[0], "_mapping"):
                 expected_keys = list(rows[0]._mapping.keys())
             else:
-                # Fallback: пытаемся получить имена полей из результата
                 expected_keys = list(range(len(rows[0]))) if rows[0] else []
-        
-        # Создаем список словарей
+
         result_dicts = []
         for row in rows:
-            if hasattr(row, '_mapping'):
+            if hasattr(row, "_mapping"):
                 mapping_dict = dict(row._mapping)
-                # Исправляем ключ _no_label на правильное имя поля
-                if '_no_label' in mapping_dict and len(expected_keys) == 1:
-                    # Если есть _no_label и ожидается только одно поле
+                if "_no_label" in mapping_dict and len(expected_keys) == 1:
                     correct_key = expected_keys[0]
-                    mapping_dict[correct_key] = mapping_dict.pop('_no_label')
-                
+                    mapping_dict[correct_key] = mapping_dict.pop("_no_label")
+
                 result_dicts.append(mapping_dict)
             else:
-                # Для обычных результатов создаем словарь из ключей и значений
                 result_dicts.append(dict(zip(expected_keys, row)))
-        
+
         return result_dicts
 
-            
     @classmethod
-    def _build_select_query(cls, select_fields: Optional[List[str]] = None, use_distinct: bool = False) -> Select:
+    def _build_select_query(
+        cls,
+        select_fields: Optional[List[str]] = None,
+        use_distinct: bool = False,
+    ) -> Select:
         """
         Построение базового SELECT запроса.
-        
+
         Args:
             select_fields: Список полей для выборки
             use_distinct: Использовать DISTINCT
-            
+
         Returns:
             Select: Скомпилированный SELECT запрос
         """
         if select_fields:
-            # Проверяем существование полей
             valid_fields = cls._validate_fields(select_fields)
             columns_map = cls._get_model_columns()
-            columns = [columns_map[field] for field in valid_fields]            
+            columns = [columns_map[field] for field in valid_fields]
             if use_distinct:
                 query = select(distinct(*columns))
             else:
                 query = select(*columns)
         else:
-            # Используем все поля из множества _model_fields
             columns_map = cls._get_model_columns()
-            columns = list(columns_map.values())            
+            columns = list(columns_map.values())
             if use_distinct:
                 query = select(distinct(*columns))
             else:
                 query = select(*columns)
-                
+
         return query
 
     @classmethod
     def _build_grouped_query(
-        cls, 
+        cls,
         group_by: Optional[Union[str, List[str]]] = None,
-        aggregations: Optional[Dict[str, str]] = None
+        aggregations: Optional[Dict[str, str]] = None,
     ) -> Select:
         """
         Построение запроса с группировкой и агрегатными функциями.
         В SELECT попадают только поля из group_by + агрегатные функции.
-        
+
         Args:
             group_by: Поле(я) для группировки
             aggregations: Словарь агрегатных функций
-            
+
         Returns:
             Select: Скомпилированный GROUP BY запрос
-            
+
         Raises:
             UnknowAggregationFunc: При неизвестной агрегационной функции
         """
         columns = []
-        
-        # Добавляем поля группировки
+
         if group_by:
             if isinstance(group_by, str):
                 group_by = [group_by]
-                
+
             valid_group_fields = cls._validate_fields(group_by)
             columns_map = cls._get_model_columns()
-            columns.extend([columns_map[field].element for field in valid_group_fields])
-        
-        # Добавляем агрегатные функции
+            columns.extend(
+                [columns_map[field].element for field in valid_group_fields]
+            )
+
         if aggregations:
             model_fields = cls._get_model_columns().keys()
             for field, func_name in aggregations.items():
                 if field in model_fields:
                     column = cls._get_model_columns()[field].element
-                    
-                    if func_name.lower() == 'count':
-                        columns.append(func.count(column).label(f"{field}_{func_name}"))
-                    elif func_name.lower() == 'sum':
-                        columns.append(func.sum(column).label(f"{field}_{func_name}"))
-                    elif func_name.lower() == 'avg':
-                        columns.append(func.avg(column).label(f"{field}_{func_name}"))
-                    elif func_name.lower() == 'min':
-                        columns.append(func.min(column).label(f"{field}_{func_name}"))
-                    elif func_name.lower() == 'max':
-                        columns.append(func.max(column).label(f"{field}_{func_name}"))
+
+                    if func_name.lower() == "count":
+                        columns.append(
+                            func.count(column).label(f"{field}_{func_name}")
+                        )
+                    elif func_name.lower() == "sum":
+                        columns.append(
+                            func.sum(column).label(f"{field}_{func_name}")
+                        )
+                    elif func_name.lower() == "avg":
+                        columns.append(
+                            func.avg(column).label(f"{field}_{func_name}")
+                        )
+                    elif func_name.lower() == "min":
+                        columns.append(
+                            func.min(column).label(f"{field}_{func_name}")
+                        )
+                    elif func_name.lower() == "max":
+                        columns.append(
+                            func.max(column).label(f"{field}_{func_name}")
+                        )
                     else:
-                        raise UnknowAggregationFunc(f"Неизвестная функция агрегации {func_name.lower}")
+                        raise UnknowAggregationFunc(
+                            f"Неизвестная функция агрегации {func_name.lower}"
+                        )
             if not columns:
-                # Если нет ни группировки, ни агрегаций - возвращаем все поля
                 columns = list(cls._get_model_columns().values())
 
-            
         return select(*columns)
 
     @classmethod
     def _apply_filters(cls, query: Select, filters: BaseModel) -> Select:
         """
         Применение фильтров равенства к запросу.
-        
+
         Args:
             query: Исходный SELECT запрос
             filters: Pydantic модель с фильтрами
-            
+
         Returns:
             Select: Запрос с примененными фильтрами
         """
-        conditions = cls._build_conditions(filter=filters)    
-        
+        conditions = cls._build_conditions(filter=filters)
+
         if conditions:
             query = query.where(and_(*conditions))
-        
-        return query
-    
 
+        return query
 
     @classmethod
-    def _apply_ordering(cls, query: Select, order_by: Union[str, List[str]]) -> Select:
+    def _apply_ordering(
+        cls, query: Select, order_by: Union[str, List[str]]
+    ) -> Select:
         """
         Применение сортировки к запросу.
-        
+
         Args:
             query: Исходный SELECT запрос
             order_by: Поле(я) для сортировки с префиксом '-' для DESC
-            
+
         Returns:
             Select: Запрос с примененной сортировкой
         """
         if isinstance(order_by, str):
             order_by = [order_by]
-        
+
         model_fields = cls._get_model_columns().keys()
-        
+
         for order_field in order_by:
             desc = False
-            
+
             # Проверяем префикс для DESC
-            if order_field.startswith('-'):
+            if order_field.startswith("-"):
                 desc = True
                 order_field = order_field[1:]
-            
+
             if order_field in model_fields:
                 column = cls._get_model_columns()[order_field].element
-                
+
                 if desc:
                     query = query.order_by(column.desc())
                 else:
                     query = query.order_by(column.asc())
-        
+
         return query
 
     @classmethod
-    def _apply_grouping(cls, query: Select, group_by: Union[str, List[str]]) -> Select:
+    def _apply_grouping(
+        cls, query: Select, group_by: Union[str, List[str]]
+    ) -> Select:
         """
         Применение группировки к запросу.
-        
+
         Args:
             query: Исходный SELECT запрос
             group_by: Поле(я) для группировки
-            
+
         Returns:
             Select: Запрос с примененной группировкой
         """
         if isinstance(group_by, str):
             group_by = [group_by]
-        
+
         group_columns = []
         model_fields = cls._get_model_columns().keys()
-        
+
         for field in group_by:
             if field in model_fields:
                 group_columns.append(cls._get_model_columns()[field].element)
-        
+
         if group_columns:
             query = query.group_by(*group_columns)
-        
+
         return query
 
     @classmethod
-    def _apply_having_filters(cls, query: Select, having_filters: BaseModel) -> Select:
+    def _apply_having_filters(
+        cls, query: Select, having_filters: BaseModel
+    ) -> Select:
         """
         Применение HAVING фильтров после группировки.
-        
+
         Args:
             query: Запрос с группировкой
             having_filters: Фильтры для применения после GROUP BY
-            
+
         Returns:
             Select: Запрос с примененными HAVING фильтрами
         """
         filter_dict = having_filters.model_dump(exclude_unset=True)
         having_conditions = []
         model_fields = cls._get_model_columns().keys()
-        
+
         for field, value in filter_dict.items():
             if field in model_fields:
                 column = cls._get_model_columns()[field].element
                 having_conditions.append(column == value)
-        
+
         if having_conditions:
             query = query.having(and_(*having_conditions))
-        
+
         return query
 
     @classmethod
     def _validate_fields(cls, fields: List[str]) -> List[str]:
         """
         Валидация существования полей в модели.
-        
+
         Args:
             fields: Список полей для валидации
-            
+
         Returns:
             List[str]: Список валидных полей
-            
+
         Raises:
             InvalidFieldError: При наличии невалидных полей
         """
@@ -513,23 +563,25 @@ class BaseRepository(Generic[T]):
             if field in model_fields:
                 valid_fields.append(field)
             else:
-                raise InvalidFieldError(f"Поле {field} отсутствует в модели {str(cls.model)}")
+                raise InvalidFieldError(
+                    f"Поле {field} отсутствует в модели {str(cls.model)}"
+                )
         return valid_fields
-    
+
     @classmethod
     def _build_conditions(
-        cls, 
-        filter: BaseModel, 
+        cls,
+        filter: BaseModel,
     ) -> List[Any]:
         """
         Построение условий фильтрации из схемы.
-        
+
         Args:
             filter: Схема с полями и значениями для фильтрации
-            
+
         Returns:
             List[Any]: Список условий для WHERE
-            
+
         Raises:
             EmptyFilterError: Если фильтры не переданы
             InvalidFieldError: Если найдено хоть одно невалидное поле
@@ -539,14 +591,14 @@ class BaseRepository(Generic[T]):
 
         if not filter_dict:
             raise EmptyFilterError("Поля фильтров не были переданы")
-        
+
         model_fields = cls._get_model_columns()
         conditions = []
-        logger.error("Передан словарь фильтров %s",filter_dict)
+        logger.debug("Передан словарь фильтров %s", filter_dict)
         for field, value in filter_dict.items():
             if field in model_fields:
                 column = model_fields[field].element
-                
+
                 if isinstance(value, list):
                     # Фильтр IN для списков
                     if len(value) == 0:
@@ -555,31 +607,32 @@ class BaseRepository(Generic[T]):
                 else:
                     conditions.append(column == value)
             else:
-                raise InvalidFieldError(f"Поле '{field}' не найдено в модели {str(cls.model)}")
-        logger.error("Поулчившиеся условия %s из словаря %s",conditions,filter_dict)
+                raise InvalidFieldError(
+                    f"Поле '{field}' не найдено в модели {str(cls.model)}"
+                )
+        logger.error(
+            "Поулчившиеся условия %s из словаря %s", conditions, filter_dict
+        )
 
         return conditions
 
     @classmethod
     @connection()
     async def create(
-        cls, 
-        values: Union[BaseModel, List[BaseModel]], 
-        session: AsyncSession
+        cls, values: Union[BaseModel, List[BaseModel]], session: AsyncSession
     ) -> int:
         """
         Создает одну или несколько записей в базе данных через insert DSL.
-        
+
         Args:
             values: BaseModel для одной записи или List[BaseModel] для нескольких записей
             session: Асинхронная сессия SQLAlchemy
-            
+
         Returns:
             int: Количество созданных записей
         """
         start_time = time.time()
 
-        # Приводим всё к списку словарей
         if isinstance(values, BaseModel):
             values_dicts = [values.model_dump(exclude_unset=True)]
             logger.debug("Создание одной записи")
@@ -587,34 +640,37 @@ class BaseRepository(Generic[T]):
             values_dicts = [v.model_dump(exclude_unset=True) for v in values]
             logger.debug("Создание %d записей батчем", len(values_dicts))
 
-        # Формируем один батч-запрос
+        for value_dict in values_dicts:
+            fields_to_validate = list(value_dict.keys())
+            cls._validate_fields(fields_to_validate)
+
         stmt = insert(cls.model).values(values_dicts)
 
         result = await session.execute(stmt)
-        logger.debug("Создано %d записей за %.3f сек", result.rowcount, _count_execute_time(start_time=start_time))
+        logger.debug(
+            "Создано %d записей за %.3f сек",
+            result.rowcount,
+            _count_execute_time(start_time=start_time),
+        )
 
         return result.rowcount
-            
 
     @classmethod
     @connection()
     async def delete(
-        cls, 
-        session: AsyncSession, 
-        id: int = None, 
-        filters: BaseModel = None
+        cls, session: AsyncSession, id: int = None, filters: BaseModel = None
     ) -> int:
         """
         Удалить записи по переданным параметрам.
-        
+
         Args:
             session: Асинхронная сессия SQLAlchemy
             id: ID записи для удаления (приоритетный параметр)
             filters: Модель с фильтрами для удаления
-            
+
         Returns:
             int: Количество удаленных записей
-            
+
         Raises:
             NotFoundError: Если записи для удаления не найдены
             EmptyFilterError: Если не переданы параметры для удаления
@@ -622,37 +678,43 @@ class BaseRepository(Generic[T]):
 
         start_time = time.time()
 
-        # Удаление по ID (приоритет)
         if id is not None:
-            logger.debug("Вызов delete - ID: %s, фильтр: %s", id, repr(filters))
+            logger.debug(
+                "Вызов delete - ID: %s, фильтр: %s", id, repr(filters)
+            )
             stmt = delete(cls.model).where(cls.model.id == id)
             result = await session.execute(stmt)
 
             if result.rowcount > 0:
-                logger.debug("Удалено %d записей по ID за %.3f сек", 
-                result.rowcount, _count_execute_time(start_time=start_time))
+                logger.debug(
+                    "Удалено %d записей по ID за %.3f сек",
+                    result.rowcount,
+                    _count_execute_time(start_time=start_time),
+                )
                 return result.rowcount
             else:
                 raise NotFoundError(f"Запись по id={id} не найдена")
-        # Удаление по фильтрам
+
         if filters is not None:
-            
+
             conditions = cls._build_conditions(filter=filters)
-            
-            # Выполняем удаление с условиями
+
             stmt = delete(cls.model).where(*conditions)
             result = await session.execute(stmt)
 
             if result.rowcount > 0:
-                logger.debug("Удалено %d записей по фильтру за %.3f сек", 
-                result.rowcount, _count_execute_time(start_time=start_time))
+                logger.debug(
+                    "Удалено %d записей по фильтру за %.3f сек",
+                    result.rowcount,
+                    _count_execute_time(start_time=start_time),
+                )
                 return result.rowcount
             else:
-                raise NotFoundError(f"Записи для удаления по фильтрам {filters} не найдены")
+                raise NotFoundError(
+                    f"Записи для удаления по фильтрам {filters} не найдены"
+                )
         else:
             raise EmptyFilterError("Не переданы параметры для удаления")
-
-
 
     @classmethod
     @connection()
@@ -661,33 +723,35 @@ class BaseRepository(Generic[T]):
         session: AsyncSession,
         values: BaseModel,
         id: int = None,
-        filters: BaseModel = None
+        filters: BaseModel = None,
     ) -> int:
         """
         Универсальный метод для обновления записей одинаковыми значениями.
-        
+
         Args:
             session: Асинхронная сессия SQLAlchemy
             values: Модель с новыми значениями для обновления
             id: ID записи для обновления (приоритетный параметр)
             filters: Модель с критериями для фильтрации записей
-            
+
         Returns:
             int: Количество обновленных записей
-            
+
         Raises:
             EmptyValueError: Если не переданы значения для обновления
             NotFoundError: Если записи для обновления не найдены
             EmptyFilterError: Если не переданы критерии для обновления
         """
         start_time = time.time()
-        logger.debug("Вызов update - ID: %s, есть_фильтр: %s", id, repr(filters))
-        # Валидация входных данных
+        logger.debug(
+            "Вызов update - ID: %s, есть_фильтр: %s", id, repr(filters)
+        )
         values_dict = values.model_dump(exclude_unset=True)
         if not values_dict:
             raise EmptyValueError("Не переданы значения для обновления")
-        
-        # Обновление по ID (приоритет)
+
+        cls._validate_fields(list(values_dict.keys()))
+
         if id is not None:
             stmt = (
                 update(cls.model)
@@ -698,41 +762,45 @@ class BaseRepository(Generic[T]):
 
             if result.rowcount == 0:
                 raise NotFoundError(f"Запись с id={id} не найдена")
-            logger.debug("Обновлено %d записей по ID за %.3f сек", 
-            result.rowcount, _count_execute_time(start_time=start_time))
+            logger.debug(
+                "Обновлено %d записей по ID за %.3f сек",
+                result.rowcount,
+                _count_execute_time(start_time=start_time),
+            )
             return result.rowcount
-        
-        # Массовое обновление по критериям
+
         if filters is not None:
 
             conditions = cls._build_conditions(filter=filters)
-        
-            # Выполняем обновление с условиями
-            stmt = (
-                update(cls.model)
-                .where(*conditions)
-                .values(**values_dict)
-            )
-            
+
+            stmt = update(cls.model).where(*conditions).values(**values_dict)
+
             result = await session.execute(stmt)
 
             if result.rowcount == 0:
-                raise NotFoundError(f"Записи для обновления по фильтрам {filters} не найдены")
-            
-            logger.debug("Обновлено %d записей по фильтру за %.3f сек", 
-            result.rowcount, _count_execute_time(start_time=start_time))
+                raise NotFoundError(
+                    f"Записи для обновления по фильтрам {filters} не найдены"
+                )
+
+            logger.debug(
+                "Обновлено %d записей по фильтру за %.3f сек",
+                result.rowcount,
+                _count_execute_time(start_time=start_time),
+            )
             return result.rowcount
         else:
-            raise EmptyFilterError("Не переданы критерии для обновления (id или filter_criteria)")
+            raise EmptyFilterError(
+                "Не переданы критерии для обновления (id или filter_criteria)"
+            )
 
 
 def _count_execute_time(start_time: float):
     """
     Вычисляет время выполнения операции.
-    
+
     Args:
         start_time: Время начала выполнения в секундах (time.time())
-        
+
     Returns:
         float: Время выполнения в секундах
     """

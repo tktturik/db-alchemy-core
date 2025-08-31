@@ -129,11 +129,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 async def main():
     await init_db(migrations_path="alembic")
-    
+
     # Создание пользователя
     user_data = UserCreate(name="John", email="john@example.com")
     await UserRepo.create(values=user_data, session=session)
-    
+
     # Получение пользователя
     user = await UserRepo.get_one(filters=UserFilter(name="John"), session=session)
     print(user)  # {"id": 1, "name": "John", "email": "john@example.com"}
@@ -207,4 +207,3 @@ class UserRepo(BaseRepository):
 - **Асинхронность**: Все операции асинхронные, используют `AsyncSession` и `asyncpg`.
 - **Ограничения**: `HAVING` требует `GROUP BY` (ограничение SQL). Фильтры не поддерживают сравнения (`>`, `<`, и т.д.).
 - **Производительность**: Используйте SQLAlchemy Core для bulk-операций, избегайте смешивания с ORM для предотвращения stale data.
-

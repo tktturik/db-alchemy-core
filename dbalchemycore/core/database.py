@@ -1,29 +1,27 @@
 import logging
-logger = logging.getLogger(__name__)
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional
-from dbalchemycore.models.base_model import Base
 import os
-import alembic.config
-
-
-
-
+from contextlib import asynccontextmanager
 from functools import wraps
+from typing import AsyncGenerator, Optional
+
+import alembic.config
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
-    create_async_engine,
     AsyncSession,
     async_sessionmaker,
+    create_async_engine,
 )
+
+from dbalchemycore.models.base_model import Base
 
 from .config import settings
 
 
+logger = logging.getLogger(__name__)
 
-# module-level engine + sessionmaker — initialize lazily
+
 _engine: Optional[AsyncEngine] = None
 _async_sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
 
@@ -54,10 +52,12 @@ def _make_engine() -> AsyncEngine:
         future=True,
     )
 
-    logger.info("Движок базы данных инициализирован для БД %s+%s://...", 
-            settings.DB_DIALECT,settings.DB_DRIVER)
+    logger.info(
+        "Движок базы данных инициализирован для БД %s+%s://...",
+        settings.DB_DIALECT,
+        settings.DB_DRIVER,
+    )
     return _engine
-
 
 
 def _make_sessionmaker() -> async_sessionmaker[AsyncSession]:
@@ -74,13 +74,10 @@ def _make_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
     engine = _make_engine()
     _async_sessionmaker = async_sessionmaker(
-        bind=engine, 
-        expire_on_commit=False, 
-        class_=AsyncSession
+        bind=engine, expire_on_commit=False, class_=AsyncSession
     )
     logger.debug("Создан асинхронный sessionmaker")
     return _async_sessionmaker
-
 
 
 @asynccontextmanager
@@ -112,8 +109,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         finally:
             await session.close()
             logger.debug("Сессия закрыта")
-                
-  
+
 
 def connection(isolation_level: Optional[str] = None, commit: bool = True):
     """
@@ -127,6 +123,7 @@ def connection(isolation_level: Optional[str] = None, commit: bool = True):
     Returns:
         Декорированную функцию с управлением сессией.
     """
+
     def decorator(method):
         @wraps(method)
         async def wrapper(*args, **kwargs):
@@ -134,16 +131,20 @@ def connection(isolation_level: Optional[str] = None, commit: bool = True):
                 logger.debug("Сессия создана в декораторе connection")
                 try:
                     if isolation_level:
-                        await session.execute(text(f"SET TRANSACTION ISOLATION LEVEL {isolation_level}"))
-                        logger.debug("Установлен уровень изоляции: %s", isolation_level)
-
+                        await session.execute(
+                            text(
+                                f"SET TRANSACTION ISOLATION LEVEL {isolation_level}"
+                            )
+                        )
+                        logger.debug(
+                            "Установлен уровень изоляции: %s", isolation_level
+                        )
 
                     result = await method(*args, session=session, **kwargs)
 
                     if commit:
                         await session.commit()
                         logger.debug("Транзакция закоммичена")
-
 
                     return result
                 except SQLAlchemyError as exc:
@@ -152,17 +153,17 @@ def connection(isolation_level: Optional[str] = None, commit: bool = True):
                         await session.rollback()
                         logger.debug("Откат транзакции выполнен")
                     except SQLAlchemyError as rollback_exc:
-                            logger.debug("Ошибка при откате: %s", str(rollback_exc))
+                        logger.debug(
+                            "Ошибка при откате: %s", str(rollback_exc)
+                        )
                     raise
                 finally:
                     await session.close()
                     logger.debug("Сессия в декораторе закрыта")
 
-
         return wrapper
 
     return decorator
-
 
 
 async def get_db_dependency() -> AsyncGenerator[AsyncSession, None]:
@@ -192,17 +193,16 @@ async def init_db(migrations_path: str = "alembic") -> None:
     _make_sessionmaker()
 
     if os.path.exists(os.path.join(migrations_path, "versions")):
-        # есть миграции → запускаем Alembic
-        alembic_cfg = alembic.config.Config(os.path.join(migrations_path, "alembic.ini"))
+        alembic_cfg = alembic.config.Config(
+            os.path.join(migrations_path, "alembic.ini")
+        )
         script = alembic.script.ScriptDirectory.from_config(alembic_cfg)
         head_revision = script.get_current_head()
-        # Получаем объект head миграции
         head_migration = script.get_revision(head_revision)
         alembic.command.upgrade(alembic_cfg, "head")
-        
+
         logger.info("Миграции alembic выполнены head: %s", head_migration)
     else:
-        # миграций нет → делаем create_all
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Alembic не найден, таблицы созданы create_all()")
