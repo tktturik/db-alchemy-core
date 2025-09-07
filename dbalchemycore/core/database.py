@@ -1,10 +1,8 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 from functools import wraps
 from typing import AsyncGenerator, Optional
 
-import alembic.config
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
@@ -39,7 +37,6 @@ def _make_engine() -> AsyncEngine:
         return _engine
 
     url = settings.sqlalchemy_url
-    logger.debug("Создание движка для базы данных: %s", url)
 
     connect_args = {"command_timeout": settings.DB_CONNECT_TIMEOUT}
 
@@ -180,31 +177,20 @@ async def get_db_dependency() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def init_db(migrations_path: str = "alembic") -> None:
+async def init_db(use_create_all: bool = False) -> None:
     """
-    Инициализирует подключение к БД, применяет миграции или создает таблицы.
-    Проверяет наличие миграций Alembic и применяет их, либо создает таблицы через metadata.create_all.
+    Инициализация engine и sessionmaker для работы с БД
+    При True флага use_create_all - создание таблиц по Metadata, используя Base.metadata.create_all
 
     Args:
-        migrations_path: Путь к директории с миграциями Alembic.
-
+        use_create_all: True, если создать таблицы в БД, используя Metadata, по умолчанию False
     """
     _make_engine()
     _make_sessionmaker()
 
-    if os.path.exists(os.path.join(migrations_path, "versions")):
-        alembic_cfg = alembic.config.Config(
-            os.path.join(migrations_path, "alembic.ini")
-        )
-        script = alembic.script.ScriptDirectory.from_config(alembic_cfg)
-        head_revision = script.get_current_head()
-        head_migration = script.get_revision(head_revision)
-        alembic.command.upgrade(alembic_cfg, "head")
-
-        logger.info("Миграции alembic выполнены head: %s", head_migration)
-    else:
+    if use_create_all:
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        logger.info("Alembic не найден, таблицы созданы create_all()")
+        logger.info("Таблицы созданы через create_all()")
 
-    logger.info("Database engine and sessionmaker initialized successfully.")
+    logger.info("База данных инициализирована успешно")

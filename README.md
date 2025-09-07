@@ -61,14 +61,14 @@ DB_CONNECT_TIMEOUT=10
 ```
 
 2. **Инициализация базы данных**:
-Вызовите `init_db` один раз при старте приложения:
+Вызовите `init_db` один раз при старте приложения, флаг `use_create_all=True` означает, что таблицы будут автоматически созданы через `Metadata`:
 
 ```python
 import asyncio
 from dbAlchemyCore import init_db
 
 async def main():
-    await init_db(migrations_path="alembic")
+    await init_db(use_create_all=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -85,6 +85,33 @@ from dbAlchemyCore import Base
 class User(Base):
     name: Mapped[str] = mapped_column(nullable=False)
     email: Mapped[str] = mapped_column(unique=True, nullable=False)
+```
+
+**Аннотации для часто используемых полей**
+
+`id_field` (автоинкрементный первичный ключ), `created_at` (дата создания) и `updated_at` (дата обновления). Они минимизируют дублирование кода и упрощают создание моделей.
+Пример использования
+```python
+from sqlalchemy.orm import Mapped
+from dbalchemycore.models import Base, id_field, created_at, updated_at
+
+class User(Base):
+    id: Mapped[id_field]
+    name: Mapped[str] = mapped_column(nullable=False)
+    email: Mapped[str] = mapped_column(unique=True, nullable=False)
+    created_at: Mapped[created_at]
+    updated_at: Mapped[updated_at]
+```
+
+Аннотации
+```python
+from typing import Annotated
+from sqlalchemy import Integer, DateTime, func
+from sqlalchemy.orm import mapped_column
+
+id_field = Annotated[int, mapped_column(Integer, primary_key=True, autoincrement=True)]
+created_at = Annotated[DateTime, mapped_column(server_default=func.now())]
+updated_at = Annotated[DateTime, mapped_column(server_default=func.now(), onupdate=func.now())]
 ```
 
 4. **Создание Pydantic-схем**:
@@ -128,7 +155,7 @@ from dbAlchemyCore.schemas.user_schemas import UserCreate, UserFilter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 async def main():
-    await init_db(migrations_path="alembic")
+    await init_db(use_create_all=True)
 
     # Создание пользователя
     user_data = UserCreate(name="John", email="john@example.com")
@@ -145,10 +172,10 @@ if __name__ == "__main__":
 ## Основные компоненты
 
 ### `init_db`
-Инициализирует подключение к базе данных, создаёт движок `AsyncEngine` и фабрику сессий `async_sessionmaker`. Применяет миграции Alembic или создаёт таблицы.
+Инициализирует подключение к базе данных, создаёт движок `AsyncEngine` и фабрику сессий `async_sessionmaker`. Cоздаёт таблицы при наличие флага use_create_all.
 
 **Параметры**:
-- `migrations_path: str` — путь к директории миграций (например, `"alembic"`).
+- `use_create_all: bool` — `True`, если необходимо, чтобы таблицы создавались автоматически через `Metadata.create_all`().
 
 **Исключения**:
 - `ConnectionRefusedError`: Сервер базы данных недоступен.
@@ -158,7 +185,7 @@ if __name__ == "__main__":
 - `CommandError`, `FileNotFoundError`: Ошибки миграций Alembic.
 
 ### `Base`
-Базовый класс для моделей, автоматически добавляет поле `id` (первичный ключ) и генерирует имя таблицы (например, `users` для класса `User`).
+Базовый класс для моделей, генерирует имя таблицы (например, `users` для класса `User`).
 
 ### `BaseRepository`
 Обобщённый класс для CRUD-операций. Поддерживает:

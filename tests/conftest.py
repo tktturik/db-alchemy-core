@@ -32,7 +32,7 @@ async def setup_database():
     Настраивает тестовую базу данных перед выполнением тестов и очищает её после.
     Инициализирует базу данных перед тестами и удаляет все таблицы после завершения сессии.
     """
-    await init_db()
+    await init_db(use_create_all=True)
     yield
     from dbalchemycore.core.database import _engine
 

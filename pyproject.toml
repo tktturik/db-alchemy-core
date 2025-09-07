@@ -17,7 +17,7 @@ max-line-length = 79
 
 [project]
 name = "dbalchemycore"
-version = "0.1.3"
+version = "0.1.4"
 description = "Asynchronous database library using SQLAlchemy Core with CRUD operations"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -39,7 +39,6 @@ dependencies = [
     "asyncpg==0.30.0",
     "typing-inspection==0.4.1",
     "typing_extensions==4.14.1",
-    "alembic==1.16.4",
     "pydantic-settings==2.5.2"
 ]
 

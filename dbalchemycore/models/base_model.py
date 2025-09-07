@@ -4,7 +4,6 @@ from sqlalchemy import DateTime, Integer
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import (
     DeclarativeBase,
-    Mapped,
     declared_attr,
     mapped_column,
 )
@@ -33,8 +32,6 @@ class Base(DeclarativeBase, AsyncAttrs):
     """
 
     __abstract__ = True
-
-    id: Mapped[id_field]  # Автоинкрементируемый первичный ключ
 
     @declared_attr.directive
     def __tablename__(cls) -> str:
